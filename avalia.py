@@ -12,20 +12,17 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
     medico_solicitante = "Não identificado"
     
     with pdfplumber.open(arquivo_pdf) as pdf:
-        # Extrai o texto apenas das 2 primeiras páginas para capturar o cabeçalho de forma limpa
-        for i, pagina in enumerate(pdf.pages):
+        for pagina in pdf.pages:
             t = pagina.extract_text()
             if t:
                 texto_bruto_completo += t + "\n"
-            if i >= 1: # Limita a varredura inicial do cabeçalho
-                break
                 
-    # --- NOVO MOTOR INFALÍVEL DE CÁLCULO DE IDADE ---
-    # 1. Tenta o padrão direto clássico "Idade / Sexo: 65a / M"
-    match_demog = re.search(r'Idade\s*/\s*Sexo\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
-    
+    # --- NOVO MOTOR DE EXTRAÇÃO ANCORADO POR PALAVRA-CHAVE ---
     idade_txt = ""
     sexo_txt = ""
+    
+    # 1. Tenta o padrão direto clássico "Idade / Sexo: 65a / M"
+    match_demog = re.search(r'Idade\s*/\s*Sexo\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
     
     if match_demog:
         dados_demograficos = match_demog.group(1).strip()
@@ -35,32 +32,43 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
         if match_idade_so:
             idade_txt = f"{match_idade_so.group(1)}a"
         else:
-            # Captura TODAS as datas no formato DD/MM/AAAA nas primeiras linhas do documento
-            todas_as_datas = re.findall(r'\b\d{2}/\d{2}/\d{4}\b', texto_bruto_completo)
+            # Captura cirúrgica baseada em âncoras de texto
+            # Busca a linha do nascimento
+            match_nasc_linha = re.search(r'(?:Nasc(?:imento)?|Data\s+of\s+Birth)[\s*:]+(\d{2}/\d{2}/\d{4})', texto_bruto_completo, re.IGNORECASE)
+            # Busca a linha da data do exame/ficha
+            match_exame_linha = re.search(r'(?:Data\s+da\s+Ficha|Emiss[ãa]o|Cadastro|Data\s+Exame)[\s*:]+(\d{2}/\d{2}/\d{4})', texto_bruto_completo, re.IGNORECASE)
             
-            if len(todas_as_datas) >= 2:
+            if match_nasc_linha and match_exame_linha:
                 try:
-                    # Converte os textos em objetos de data reais para comparar
-                    objetos_data = [datetime.strptime(dt, "%d/%m/%Y") for dt in todas_as_datas]
-                    # A menor data obrigatoriamente é o nascimento; a maior é o exame
-                    data_nascimento = min(objetos_data)
-                    data_exame = max(objetos_data)
+                    dt_nasc = datetime.strptime(match_nasc_linha.group(1), "%d/%m/%Y")
+                    dt_exame = datetime.strptime(match_exame_linha.group(1), "%d/%m/%Y")
                     
-                    # Faz o cálculo exato da idade considerando o dia e o mês
-                    calc_idade = data_exame.year - data_nascimento.year - (
-                        (data_exame.month, data_exame.day) < (data_nascimento.month, data_nascimento.day)
+                    calc_idade = dt_exame.year - dt_nasc.year - (
+                        (dt_exame.month, dt_exame.day) < (dt_nasc.month, dt_nasc.day)
                     )
                     idade_txt = f"{calc_idade}a"
                 except:
                     idade_txt = "Não identificado"
             else:
-                idade_txt = "Não identificado"
+                # Se a ancoragem falhar, tenta usar as duas primeiras datas genéricas que encontrar na página
+                todas_as_datas = re.findall(r'\b\d{2}/\d{2}/\d{4}\b', texto_bruto_completo)
+                if len(todas_as_datas) >= 2:
+                    try:
+                        dt1 = datetime.strptime(todas_as_datas[0], "%d/%m/%Y")
+                        dt2 = datetime.strptime(todas_as_datas[1], "%d/%m/%Y")
+                        data_nascimento = min(dt1, dt2)
+                        data_exame = max(dt1, dt2)
+                        calc_idade = data_exame.year - data_nascimento.year - ((data_exame.month, data_exame.day) < (data_nascimento.month, data_nascimento.day))
+                        idade_txt = f"{calc_idade}a"
+                    except:
+                        idade_txt = "Não identificado"
+                else:
+                    idade_txt = "Não identificado"
 
         # Tenta achar sexo isolado no texto do cabeçalho
         match_sexo_so = re.search(r'Sexo\s*:\s*\b(M|F|Masculino|Feminino)\b', texto_bruto_completo, re.IGNORECASE)
         if match_sexo_so:
-            sexo_txt = match_sexo_so.group(1).strip()
-            sexo_txt = "M" if sexo_txt.upper().startswith("M") else "F"
+            sexo_txt = "M" if match_sexo_so.group(1).strip().upper().startswith("M") else "F"
         else:
             sexo_txt = "Não informado"
 
@@ -70,10 +78,9 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
     match_medico = re.search(r'Médico\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
     if match_medico:
         medico_solicitante = match_medico.group(1).strip()
-        # Remove CRMs grudados se houver para limpar a interface
         medico_solicitante = re.sub(r'\bCRM.*', '', medico_solicitante, flags=re.IGNORECASE).strip()
             
-    # --- SEGUNDA PASSAGEM: LIMPEZA EANONIMIZAÇÃO COMPLETA DO CORPO ---
+    # --- SEGUNDA PASSAGEM: LIMPEZA E ANONIMIZAÇÃO ---
     with pdfplumber.open(arquivo_pdf) as pdf:
         for i, pagina in enumerate(pdf.pages):
             texto_pagina = pagina.extract_text()
@@ -83,9 +90,9 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                 passou_o_cabecalho = False
                 
                 marcos_fim_cabecalho = ["resultados de exames", "www.tecnolab", "senha:", "acesso ao laudo", "coleta:"]
-                termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:", "data nascimento:", "ficha:"]
+                termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:", "data nascimento:", "ficha:", "data da ficha:"]
                 
-                for linha in linhas:
+                for linha in lines:
                     linha_limpa = linha.strip()
                     if not linha_limpa:
                         continue
@@ -131,7 +138,7 @@ def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medi
         Sua tarefa:
         1. Direcione formalmente o início do parecer ao(à) {medico}.
         2. Agrupe os exames por categorias lógicas.
-        3. Identifique e destaque claramente quais resultados estão FORA dos valores de referência laboratoriais esperados para este perfil disposição fisiológica.
+        3. Identifique e destaque claramente quais resultados estão FORA dos valores de referência laboratoriais esperados para este perfil fisiológico.
         4. Redija um parecer clínico conciso, estruturado e objetivo, facilitando a tomada de decisão médica.
         
         RESTRIÇÃO CRÍTICA DE ENCERRAMENTO:
