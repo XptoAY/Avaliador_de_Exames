@@ -1,6 +1,7 @@
 import streamlit as st
 import pdfplumber
 import re
+from datetime import datetime
 import google.generativeai as genai
 
 # --- FUNÇÃO DE EXTRAÇÃO E EXTRAÇÃO DE METADADOS ---
@@ -11,57 +12,69 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
     medico_solicitante = "Não identificado"
     
     with pdfplumber.open(arquivo_pdf) as pdf:
-        for pagina in pdf.pages:
+        # Extrai o texto apenas das 2 primeiras páginas para capturar o cabeçalho de forma limpa
+        for i, pagina in enumerate(pdf.pages):
             t = pagina.extract_text()
             if t:
                 texto_bruto_completo += t + "\n"
-        
-        # 1. Tenta capturar o padrão direto clássico "Idade / Sexo: 65a / M"
-        match_demog = re.search(r'Idade\s*/\s*Sexo\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
-        if match_demog:
-            dados_demograficos = match_demog.group(1).strip()
-        else:
-            # Estratégia de Fallback por partes isoladas
-            idade_txt = ""
-            sexo_txt = ""
-            
-            # Tenta achar idade direta isolada (ex: "Idade: 45 anos")
-            match_idade_so = re.search(r'Idade\s*:\s*(\d+)', texto_bruto_completo, re.IGNORECASE)
-            if match_idade_so:
-                idade_txt = f"{match_idade_so.group(1)}a"
-            else:
-                # Fallback Dinâmico: Calcular usando a Data de Nascimento e Data do Exame
-                match_nasc = re.search(r'(?:Nasc(?:imento)?|Data\s+Nasc(?:imento)?)\s*:\s*(\d{2}/\d{2}/\d{4})', texto_bruto_completo, re.IGNORECASE)
-                match_exame = re.search(r'(?:Emiss[ãa]o|Cadastro|Data\s+Cadastro|Data\s+Exame)\s*:\s*(\d{2}/\d{2}/\d{4})', texto_bruto_completo, re.IGNORECASE)
+            if i >= 1: # Limita a varredura inicial do cabeçalho
+                break
                 
-                if match_nasc and match_exame:
-                    try:
-                        dn_dia, dn_mes, dn_ano = map(int, match_nasc.group(1).split('/'))
-                        de_dia, de_mes, de_ano = map(int, match_exame.group(1).split('/'))
-                        calc_idade = de_ano - dn_ano - ((de_mes, de_dia) < (dn_mes, dn_dia))
-                        idade_txt = f"{calc_idade}a"
-                    except:
-                        pass
+    # --- NOVO MOTOR INFALÍVEL DE CÁLCULO DE IDADE ---
+    # 1. Tenta o padrão direto clássico "Idade / Sexo: 65a / M"
+    match_demog = re.search(r'Idade\s*/\s*Sexo\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
+    
+    idade_txt = ""
+    sexo_txt = ""
+    
+    if match_demog:
+        dados_demograficos = match_demog.group(1).strip()
+    else:
+        # Tenta achar idade direta isolada (ex: "Idade: 45")
+        match_idade_so = re.search(r'Idade\s*:\s*(\d+)', texto_bruto_completo, re.IGNORECASE)
+        if match_idade_so:
+            idade_txt = f"{match_idade_so.group(1)}a"
+        else:
+            # Captura TODAS as datas no formato DD/MM/AAAA nas primeiras linhas do documento
+            todas_as_datas = re.findall(r'\b\d{2}/\d{2}/\d{4}\b', texto_bruto_completo)
             
-            # Tenta achar sexo isolado no texto (ex: "Sexo: Masculino" ou "Sexo: F")
-            match_sexo_so = re.search(r'Sexo\s*:\s*\b(M|F|Masculino|Feminino)\b', texto_bruto_completo, re.IGNORECASE)
-            if match_sexo_so:
-                sexo_txt = match_sexo_so.group(1).strip()
-            
-            # Consolida as informações encontradas por fallback do extrator
-            if idade_txt and sexo_txt:
-                dados_demograficos = f"{idade_txt} / {sexo_txt}"
-            elif idade_txt:
-                dados_demograficos = f"{idade_txt} / Não informado"
-            elif sexo_txt:
-                dados_demograficos = f"Não informado / {sexo_txt}"
+            if len(todas_as_datas) >= 2:
+                try:
+                    # Converte os textos em objetos de data reais para comparar
+                    objetos_data = [datetime.strptime(dt, "%d/%m/%Y") for dt in todas_as_datas]
+                    # A menor data obrigatoriamente é o nascimento; a maior é o exame
+                    data_nascimento = min(objetos_data)
+                    data_exame = max(objetos_data)
+                    
+                    # Faz o cálculo exato da idade considerando o dia e o mês
+                    calc_idade = data_exame.year - data_nascimento.year - (
+                        (data_exame.month, data_exame.day) < (data_nascimento.month, data_nascimento.day)
+                    )
+                    idade_txt = f"{calc_idade}a"
+                except:
+                    idade_txt = "Não identificado"
+            else:
+                idade_txt = "Não identificado"
+
+        # Tenta achar sexo isolado no texto do cabeçalho
+        match_sexo_so = re.search(r'Sexo\s*:\s*\b(M|F|Masculino|Feminino)\b', texto_bruto_completo, re.IGNORECASE)
+        if match_sexo_so:
+            sexo_txt = match_sexo_so.group(1).strip()
+            sexo_txt = "M" if sexo_txt.upper().startswith("M") else "F"
+        else:
+            sexo_txt = "Não informado"
+
+        dados_demograficos = f"{idade_txt} / {sexo_txt}"
         
-        # Captura Médico Solicitante
-        match_medico = re.search(r'Médico\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
-        if match_medico:
-            medico_solicitante = match_medico.group(1).strip()
+    # --- CAPTURA DO MÉDICO ---
+    match_medico = re.search(r'Médico\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
+    if match_medico:
+        medico_solicitante = match_medico.group(1).strip()
+        # Remove CRMs grudados se houver para limpar a interface
+        medico_solicitante = re.sub(r'\bCRM.*', '', medico_solicitante, flags=re.IGNORECASE).strip()
             
-        # Limpeza por página (Remoção do cabeçalho)
+    # --- SEGUNDA PASSAGEM: LIMPEZA EANONIMIZAÇÃO COMPLETA DO CORPO ---
+    with pdfplumber.open(arquivo_pdf) as pdf:
         for i, pagina in enumerate(pdf.pages):
             texto_pagina = pagina.extract_text()
             if texto_pagina:
@@ -69,8 +82,8 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                 linhas_resultados = []
                 passou_o_cabecalho = False
                 
-                marcos_fim_cabecalho = ["resultados de exames", "www.tecnolab", "senha:", "acesso ao laudo"]
-                termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:", "data nasc", "nascimento:"]
+                marcos_fim_cabecalho = ["resultados de exames", "www.tecnolab", "senha:", "acesso ao laudo", "coleta:"]
+                termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:", "data nascimento:", "ficha:"]
                 
                 for linha in linhas:
                     linha_limpa = linha.strip()
@@ -78,7 +91,6 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                         continue
                     
                     linha_lower = linha_limpa.lower()
-                    
                     if any(marco in linha_lower for marco in marcos_fim_cabecalho):
                         passou_o_cabecalho = True
                         continue
@@ -119,8 +131,8 @@ def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medi
         Sua tarefa:
         1. Direcione formalmente o início do parecer ao(à) {medico}.
         2. Agrupe os exames por categorias lógicas.
-        3. Identifique e destaque claramente quais resultados estão FORA dos valores de referência laboratoriais esperados para este perfil fisiológico.
-        4. Redija um parecer clínico conciso, estruturado e objective, facilitando a tomada de decisão médica.
+        3. Identifique e destaque claramente quais resultados estão FORA dos valores de referência laboratoriais esperados para este perfil disposição fisiológica.
+        4. Redija um parecer clínico conciso, estruturado e objetivo, facilitando a tomada de decisão médica.
         
         RESTRIÇÃO CRÍTICA DE ENCERRAMENTO:
         Termine o texto imediatamente após a conclusão da análise técnica. Não adicione nenhuma frase de cortesia, encerramento formal, saudações finais ou mensagens corporativas como "Colocamo-nos à disposição para quaisquer esclarecimentos adicionais" ou similares.
@@ -144,7 +156,6 @@ st.title("🔬 Analisador de Exames com IA")
 
 st.subheader("📋 Informações Clínicas Adicionais")
 
-# Criação de duas colunas na interface para colocar as perguntas lado a lado
 col_etnia, col_sexo = st.columns(2)
 
 with col_etnia:
@@ -175,7 +186,7 @@ if arquivo_upado is not None:
                 else:
                     st.success("Dados do laudo processados com sucesso!")
                     
-                    # --- RECONCILIAÇÃO DEMOGRÁFICA (LAUDO VS INTERFACE) ---
+                    # --- RECONCILIAÇÃO DEMOGRÁFICA ---
                     idade_exibicao = "Não identificado"
                     sexo_exibicao = "Não informado"
                     
@@ -187,23 +198,21 @@ if arquivo_upado is not None:
                         if "a" in demograficos or any(c.isdigit() for c in demograficos):
                             idade_exibicao = demograficos
                     
-                    # Se o usuário definiu o sexo manualmente via botão, essa escolha ganha prioridade
+                    # Substituição manual via botões da Interface
                     if sexo_selecionado != "Usar dados do laudo":
                         sexo_exibicao = "M" if sexo_selecionado == "Masculino" else "F"
                     
                     demograficos_finais = f"{idade_exibicao} / {sexo_exibicao}"
                     
-                    # 1. Injeção de CSS Global para customizar as colunas nativas do Streamlit
+                    # 1. Injeção de CSS Global para customizar as colunas
                     st.markdown("""
                         <style>
-                        /* Estiliza os blocos internos das colunas para parecerem cartões */
                         [data-testid="stColumn"] {
                             border: 1px solid #4A4A4A !important;
                             padding: 12px !important;
                             border-radius: 5px !important;
                             background-color: rgba(255, 255, 255, 0.02) !important;
                         }
-                        /* Remove margens extras para alinhar o texto */
                         [data-testid="stColumn"] p {
                             margin-bottom: 2px !important;
                         }
