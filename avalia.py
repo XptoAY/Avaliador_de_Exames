@@ -1,0 +1,144 @@
+import streamlit as st
+import pdfplumber
+import re
+import google.generativeai as genai
+import os
+
+# --- FUNÇÃO DE EXTRAÇÃO E EXTRAÇÃO DE METADADOS ---
+def processar_e_anonimizar_pdf(arquivo_pdf):
+    texto_bruto_completo = ""
+    texto_anonimizado_completo = ""
+    dados_demograficos = "Não identificado"
+    medico_solicitante = "Não identificado"
+    
+    with pdfplumber.open(arquivo_pdf) as pdf:
+        for pagina in pdf.pages:
+            t = pagina.extract_text()
+            if t:
+                texto_bruto_completo += t + "\n"
+        
+        # Captura Idade/Sexo e Médico Solicitante
+        match_demog = re.search(r'Idade\s*/\s*Sexo\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
+        if match_demog:
+            dados_demograficos = match_demog.group(1).strip()
+            
+        match_medico = re.search(r'Médico\s*:\s*([^\n]+)', texto_bruto_completo, re.IGNORECASE)
+        if match_medico:
+            medico_solicitante = match_medico.group(1).strip()
+            
+        # Limpeza por página (Remoção do cabeçalho)
+        for i, pagina in enumerate(pdf.pages):
+            texto_pagina = pagina.extract_text()
+            if texto_pagina:
+                linhas = texto_pagina.split('\n')
+                linhas_resultados = []
+                passou_o_cabecalho = False
+                
+                marcos_fim_cabecalho = ["resultados de exames", "www.tecnolab", "senha:", "acesso ao laudo"]
+                termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:"]
+                
+                for linha in linhas:
+                    linha_limpa = linha.strip()
+                    if not linha_limpa:
+                        continue
+                    
+                    linha_lower = linha_limpa.lower()
+                    
+                    if any(marco in linha_lower for marco in marcos_fim_cabecalho):
+                        passou_o_cabecalho = True
+                        continue
+                    
+                    if passou_o_cabecalho:
+                        if any(termo in linha_lower for termo in termos_bloqueados):
+                            continue
+                        linhas_resultados.append(linha_limpa)
+                
+                if not linhas_resultados:
+                    for linha in linhas:
+                        linha_limpa = linha.strip()
+                        if not any(t in linha_limpa.lower() for t in termos_bloqueados):
+                            linhas_resultados.append(linha_limpa)
+                
+                texto_pagina_limpo = "\n".join(linhas_resultados)
+                if texto_pagina_limpo.strip():
+                    texto_anonimizado_completo += f"--- RESULTADOS DA PÁGINA {i+1} ---\n"
+                    texto_anonimizado_completo += texto_pagina_limpo + "\n\n"
+                    
+    return texto_anonimizado_completo, dados_demograficos, medico_solicitante
+
+
+def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medico, chave_api):
+    try:
+        genai.configure(api_key=chave_api)
+        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+        
+        prompt = f"""
+        Atue como um analista laboratorial avançado emitindo uma nota de suporte ao médico solicitante.
+        
+        MÉDICO SOLICITANTE: {medico}
+        
+        PERFIL FISIOLÓGICO DO PACIENTE (ANÔNIMO):
+        - Idade e Sexo Biológico: {dados_demograficos}
+        - Etnia/Ancestralidade: {etnia_afro}
+        
+        Sua tarefa:
+        1. Direcione formalmente o início do parecer ao(à) {medico}.
+        2. Agrupe os exames por categorias lógicas.
+        3. Identifique e destaque claramente quais resultados estão FORA dos valores de referência laboratoriais esperados para este perfil fisiológico.
+        4. Redija um parecer clínico conciso, estruturado e objetivo, facilitando a tomada de decisão médica.
+        
+        DADOS DOS EXAMES:
+        {texto_limpo}
+        """
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Erro na análise da IA: {e}. Verifique se a sua chave API é válida."
+
+
+# --- INTERFACE (STREAMLIT) ---
+st.set_page_config(page_title="Analisador Clínico IA", layout="centered")
+
+# Como na nuvem não salvamos arquivos locais por privacidade, a chave fica guardada apenas na sessão do navegador do usuário
+st.sidebar.header("⚙️ Configuração")
+api_key_input = st.sidebar.text_input("Google Gemini API Key", type="password", help="Sua chave não é salva nos nossos servidores.")
+
+st.title("🔬 Analisador de Exames com IA")
+
+st.subheader("📋 Informações Clínicas Adicionais")
+etnia_selecionada = st.radio(
+    "O paciente é de etnia/ancestralidade afrodescendente?",
+    ["Não", "Sim", "Não informado"]
+)
+
+st.write("---")
+arquivo_upado = st.file_uploader("Carregue o PDF do laudo", type=["pdf"])
+
+if arquivo_upado is not None:
+    if st.button("Processar e Analisar Exames"):
+        if not api_key_input:
+            st.error("Por favor, insira sua Gemini API Key na barra lateral esquerda para prosseguir.")
+        else:
+            with st.spinner("Higienizando laudo e extraindo variáveis..."):
+                texto_anonimizado, demograficos, medico = processar_e_anonimizar_pdf(arquivo_upado)
+                
+                if not texto_anonimizado.strip():
+                    st.error("Não foi possível isolar os exames do laudo.")
+                else:
+                    st.success("Dados do laudo processados com sucesso!")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(label="Médico Solicitante", value=medico)
+                    with col2:
+                        st.metric(label="Idade / Sexo", value=demograficos)
+                    with col3:
+                        st.metric(label="Afrodescendente", value=etnia_selecionada)
+                    
+                    with st.spinner("O Gemini está gerando o parecer clínico preliminar..."):
+                        parecer_final = analisar_resultados_com_ia(
+                            texto_anonimizado, demograficos, etnia_selecionada, medico, api_key_input
+                        )
+                    
+                    st.subheader("📋 Parecer Destinado ao Médico")
+                    st.markdown(parecer_final)
