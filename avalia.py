@@ -128,24 +128,25 @@ if arquivo_upado is not None:
                 else:
                     st.success("Dados do laudo processados com sucesso!")
                     
-                    # --- COMPONENTE VISUAL SUBSTITUTO (SMALL CARDS) ---
-                    st.markdown(f"""
+                # --- COMPONENTE VISUAL CORRIGIDO (SMALL CARDS) ---
+                    html_cards = """
                     <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
                         <div style="flex: 1; min-width: 200px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
                             <small style="color: #888;">Médico Solicitante</small>
-                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{medico}</div>
+                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{medico_nome}</div>
                         </div>
                         <div style="width: 130px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
                             <small style="color: #888;">Idade / Sexo</small>
-                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{demograficos}</div>
+                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{p_demograficos}</div>
                         </div>
                         <div style="width: 140px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
                             <small style="color: #888;">Afrodescendente</small>
-                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{etnia_selecionada}</div>
+                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{p_etnia}</div>
                         </div>
                     </div>
-                    """, unsafe_html=True)
+                    """.format(medico_nome=medico, p_demograficos=demograficos, p_etnia=etnia_selecionada)
                     
+                    st.markdown(html_cards, unsafe_html=True)                    
                     with st.spinner("O Gemini está gerando o parecer clínico preliminar..."):
                         parecer_final = analisar_resultados_com_ia(
                             texto_anonimizado, demograficos, etnia_selecionada, medico, api_key_input
