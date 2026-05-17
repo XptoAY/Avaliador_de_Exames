@@ -69,7 +69,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
 def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medico, chave_api):
     try:
         genai.configure(api_key=chave_api)
-        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+        model = genai.GenerativeModel(model_name="gemini-2.5-flash")
         
         prompt = f"""
         Atue como um analista laboratorial avançado emitindo uma nota técnica de suporte ao médico solicitante.
