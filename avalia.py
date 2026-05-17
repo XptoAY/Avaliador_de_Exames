@@ -17,7 +17,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
             if t:
                 texto_bruto_completo += t + "\n"
                 
-    # --- NOVO MOTOR DE EXTRAÇÃO ANCORADO POR PALAVRA-CHAVE ---
+    # --- MOTOR DE EXTRAÇÃO ANCORADO POR PALAVRA-CHAVE ---
     idade_txt = ""
     sexo_txt = ""
     
@@ -80,7 +80,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
         medico_solicitante = match_medico.group(1).strip()
         medico_solicitante = re.sub(r'\bCRM.*', '', medico_solicitante, flags=re.IGNORECASE).strip()
             
-    # --- SEGUNDA PASSAGEM: LIMPEZA E ANONIMIZAÇÃO ---
+    # --- SEGUNDA PASSAGEM: LIMPEZA E AUTOMATIZAÇÃO (CORRIGIDO LINES -> LINHAS) ---
     with pdfplumber.open(arquivo_pdf) as pdf:
         for i, pagina in enumerate(pdf.pages):
             texto_pagina = pagina.extract_text()
@@ -92,7 +92,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                 marcos_fim_cabecalho = ["resultados de exames", "www.tecnolab", "senha:", "acesso ao laudo", "coleta:"]
                 termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:", "data nascimento:", "ficha:", "data da ficha:"]
                 
-                for linha in lines:
+                for linha in linhas: # <--- CORREÇÃO AQUI
                     linha_limpa = linha.strip()
                     if not linha_limpa:
                         continue
@@ -108,7 +108,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                         linhas_resultados.append(linha_limpa)
                 
                 if not linhas_resultados:
-                    for linha in linhas:
+                    for linha in linhas: # <--- CORREÇÃO AQUI
                         linha_limpa = linha.strip()
                         if not any(t in linha_limpa.lower() for t in termos_bloqueados):
                             linhas_resultados.append(linha_limpa)
