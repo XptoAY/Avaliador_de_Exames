@@ -69,7 +69,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
 def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medico, chave_api):
     try:
         genai.configure(api_key=chave_api)
-        model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+        model = genai.GenerativeModel(model_name="gemini-1.5-flash")
         
         prompt = f"""
         Atue como um analista laboratorial avançado emitindo uma nota técnica de suporte ao médico solicitante.
@@ -128,25 +128,41 @@ if arquivo_upado is not None:
                 else:
                     st.success("Dados do laudo processados com sucesso!")
                     
-                # --- COMPONENTE VISUAL CORRIGIDO (SMALL CARDS) ---
-                    html_cards = """
-                    <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
-                        <div style="flex: 1; min-width: 200px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
-                            <small style="color: #888;">Médico Solicitante</small>
-                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{medico_nome}</div>
-                        </div>
-                        <div style="width: 130px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
-                            <small style="color: #888;">Idade / Sexo</small>
-                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{p_demograficos}</div>
-                        </div>
-                        <div style="width: 140px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
-                            <small style="color: #888;">Afrodescendente</small>
-                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{p_etnia}</div>
-                        </div>
-                    </div>
-                    """.format(medico_nome=medico, p_demograficos=demograficos, p_etnia=etnia_selecionada)
+                    # 1. Injeção de CSS Global para customizar as colunas nativas do Streamlit
+                    st.markdown("""
+                        <style>
+                        /* Estiliza os blocos internos das colunas para parecerem cartões */
+                        [data-testid="stColumn"] {
+                            border: 1px solid #4A4A4A !important;
+                            padding: 12px !important;
+                            border-radius: 5px !important;
+                            background-color: rgba(255, 255, 255, 0.02) !important;
+                        }
+                        /* Remove margens extras para alinhar o texto */
+                        [data-testid="stColumn"] p {
+                            margin-bottom: 2px !important;
+                        }
+                        </style>
+                    """, unsafe_html=True)
                     
-                    st.markdown(html_cards, unsafe_html=True)                    
+                    # 2. Renderização usando componentes nativos (Sem risco de TypeError)
+                    col1, col2, col3 = st.columns([2, 1, 1]) # O '2' dá mais espaço para o nome do médico
+                    
+                    with col1:
+                        st.caption("Médico Solicitante")
+                        st.markdown(f"**{medico}**")
+                        
+                    with col2:
+                        st.caption("Idade / Sexo")
+                        st.markdown(f"**{demograficos}**")
+                        
+                    with col3:
+                        st.caption("Afrodescendente")
+                        st.markdown(f"**{etnia_selecionada}**")
+                    
+                    # Espaçamento estético após os cartões
+                    st.write("") 
+                    
                     with st.spinner("O Gemini está gerando o parecer clínico preliminar..."):
                         parecer_final = analisar_resultados_com_ia(
                             texto_anonimizado, demograficos, etnia_selecionada, medico, api_key_input
