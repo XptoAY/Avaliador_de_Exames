@@ -2,7 +2,6 @@ import streamlit as st
 import pdfplumber
 import re
 import google.generativeai as genai
-import os
 
 # --- FUNÇÃO DE EXTRAÇÃO E EXTRAÇÃO DE METADADOS ---
 def processar_e_anonimizar_pdf(arquivo_pdf):
@@ -73,19 +72,22 @@ def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medi
         model = genai.GenerativeModel(model_name="gemini-2.5-flash")
         
         prompt = f"""
-        Atue como um analista laboratorial avançado emitindo uma nota de suporte ao médico solicitante.
+        Atue como um analista laboratorial avançado emitindo uma nota técnica de suporte ao médico solicitante.
         
         MÉDICO SOLICITANTE: {medico}
         
         PERFIL FISIOLÓGICO DO PACIENTE (ANÔNIMO):
         - Idade e Sexo Biológico: {dados_demograficos}
-        - Etnia/Ancestralidade: {etnia_afro}
+        - O usuário confirmou que o paciente possui ancestralidade/etnia afrodescendente? Resposta: {etnia_afro}. (Utilize esta informação estritamente se houver cálculo de eGFR/função renal no texto).
         
         Sua tarefa:
         1. Direcione formalmente o início do parecer ao(à) {medico}.
         2. Agrupe os exames por categorias lógicas.
         3. Identifique e destaque claramente quais resultados estão FORA dos valores de referência laboratoriais esperados para este perfil fisiológico.
         4. Redija um parecer clínico conciso, estruturado e objetivo, facilitando a tomada de decisão médica.
+        
+        RESTRIÇÃO CRÍTICA DE ENCERRAMENTO:
+        Termine o texto imediatamente após a conclusão da análise técnica. Não adicione nenhuma frase de cortesia, encerramento formal, saudações finais ou mensagens corporativas como "Colocamo-nos à disposição para quaisquer esclarecimentos adicionais" ou similares.
         
         DADOS DOS EXAMES:
         {texto_limpo}
@@ -99,9 +101,8 @@ def analisar_resultados_com_ia(texto_limpo, dados_demograficos, etnia_afro, medi
 # --- INTERFACE (STREAMLIT) ---
 st.set_page_config(page_title="Analisador Clínico IA", layout="centered")
 
-# Como na nuvem não salvamos arquivos locais por privacidade, a chave fica guardada apenas na sessão do navegador do usuário
 st.sidebar.header("⚙️ Configuração")
-api_key_input = st.sidebar.text_input("Google Gemini API Key", type="password", help="Sua chave não é salva nos nossos servidores.")
+api_key_input = st.sidebar.text_input("Google Gemini API Key", type="password", help="A sua chave não é guardada nos servidores.")
 
 st.title("🔬 Analisador de Exames com IA")
 
@@ -117,7 +118,7 @@ arquivo_upado = st.file_uploader("Carregue o PDF do laudo", type=["pdf"])
 if arquivo_upado is not None:
     if st.button("Processar e Analisar Exames"):
         if not api_key_input:
-            st.error("Por favor, insira sua Gemini API Key na barra lateral esquerda para prosseguir.")
+            st.error("Por favor, insira a sua Gemini API Key na barra lateral esquerda para prosseguir.")
         else:
             with st.spinner("Higienizando laudo e extraindo variáveis..."):
                 texto_anonimizado, demograficos, medico = processar_e_anonimizar_pdf(arquivo_upado)
@@ -127,13 +128,23 @@ if arquivo_upado is not None:
                 else:
                     st.success("Dados do laudo processados com sucesso!")
                     
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric(label="Médico Solicitante", value=medico)
-                    with col2:
-                        st.metric(label="Idade / Sexo", value=demograficos)
-                    with col3:
-                        st.metric(label="Afrodescendente", value=etnia_selecionada)
+                    # --- COMPONENTE VISUAL SUBSTITUTO (SMALL CARDS) ---
+                    st.markdown(f"""
+                    <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 200px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
+                            <small style="color: #888;">Médico Solicitante</small>
+                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{medico}</div>
+                        </div>
+                        <div style="width: 130px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
+                            <small style="color: #888;">Idade / Sexo</small>
+                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{demograficos}</div>
+                        </div>
+                        <div style="width: 140px; border: 1px solid #4A4A4A; padding: 10px; border-radius: 5px;">
+                            <small style="color: #888;">Afrodescendente</small>
+                            <div style="font-size: 15px; font-weight: bold; margin-top: 5px;">{etnia_selecionada}</div>
+                        </div>
+                    </div>
+                    """, unsafe_html=True)
                     
                     with st.spinner("O Gemini está gerando o parecer clínico preliminar..."):
                         parecer_final = analisar_resultados_com_ia(
