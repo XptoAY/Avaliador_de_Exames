@@ -129,6 +129,7 @@ if arquivo_upado is not None:
                     st.success("Dados do laudo processados com sucesso!")
                     
                     # 1. Injeção de CSS Global para customizar as colunas nativas do Streamlit
+                    # CORREÇÃO AQUI: unsafe_allow_html=True
                     st.markdown("""
                         <style>
                         /* Estiliza os blocos internos das colunas para parecerem cartões */
@@ -143,9 +144,9 @@ if arquivo_upado is not None:
                             margin-bottom: 2px !important;
                         }
                         </style>
-                    """, unsafe_html=True)
+                    """, unsafe_allow_html=True)
                     
-                    # 2. Renderização usando componentes nativos (Sem risco de TypeError)
+                    # 2. Renderização usando componentes nativos 
                     col1, col2, col3 = st.columns([2, 1, 1]) # O '2' dá mais espaço para o nome do médico
                     
                     with col1:
