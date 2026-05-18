@@ -17,7 +17,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
             if t:
                 texto_bruto_completo += t + "\n"
                 
-    # --- MOTOR DE EXTRAÇÃO ANCORADO POR PALAVRA-CHAVE ---
+    # --- NOVO MOTOR DE DATA EXTREMAMENTE TOLERANTE A LAYOUTS ---
     idade_txt = ""
     sexo_txt = ""
     
@@ -32,38 +32,36 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
         if match_idade_so:
             idade_txt = f"{match_idade_so.group(1)}a"
         else:
-            # Captura cirúrgica baseada em âncoras de texto
-            # Busca a linha do nascimento
-            match_nasc_linha = re.search(r'(?:Nasc(?:imento)?|Data\s+of\s+Birth)[\s*:]+(\d{2}/\d{2}/\d{4})', texto_bruto_completo, re.IGNORECASE)
-            # Busca a linha da data do exame/ficha
-            match_exame_linha = re.search(r'(?:Data\s+da\s+Ficha|Emiss[ãa]o|Cadastro|Data\s+Exame)[\s*:]+(\d{2}/\d{2}/\d{4})', texto_bruto_completo, re.IGNORECASE)
+            # Captura TODAS as sequências no formato DD/MM/AAAA espalhadas pelo texto do laudo
+            # O Regex abaixo tolera espaços extras que o extrator de PDF costuma injetar (ex: 15 / 01 / 2026)
+            padrao_data_livre = r'\b(\d{2})[\s/]*(\d{2})[\s/]*(\d{4})\b'
+            matches_datas = re.findall(padrao_data_livre, texto_bruto_completo)
             
-            if match_nasc_linha and match_exame_linha:
+            datas_validas = []
+            for m in matches_datas:
+                str_data = f"{m[0]}/{m[1]}/{m[2]}"
                 try:
-                    dt_nasc = datetime.strptime(match_nasc_linha.group(1), "%d/%m/%Y")
-                    dt_exame = datetime.strptime(match_exame_linha.group(1), "%d/%m/%Y")
-                    
-                    calc_idade = dt_exame.year - dt_nasc.year - (
-                        (dt_exame.month, dt_exame.day) < (dt_nasc.month, dt_nasc.day)
-                    )
-                    idade_txt = f"{calc_idade}a"
-                except:
-                    idade_txt = "Não identificado"
+                    obj_data = datetime.strptime(str_data, "%d/%m/%Y")
+                    # Evita pegar anos bizarros fora do escopo clínico comum
+                    if 1900 <= obj_data.year <= 2100:
+                        datas_validas.append(obj_data)
+                except ValueError:
+                    continue
+            
+            # Remove duplicadas mantendo a ordem
+            datas_validas = sorted(list(set(datas_validas)))
+            
+            if len(datas_validas) >= 2:
+                # O menor ano SEMPRE será o nascimento, o maior SEMPRE será a ficha/exame
+                dt_nasc = datas_validas[0]
+                dt_exame = datas_validas[-1] # Pega o último (maior) do array ordenado
+                
+                calc_idade = dt_exame.year - dt_nasc.year - (
+                    (dt_exame.month, dt_exame.day) < (dt_nasc.month, dt_nasc.day)
+                )
+                idade_txt = f"{calc_idade}a"
             else:
-                # Se a ancoragem falhar, tenta usar as duas primeiras datas genéricas que encontrar na página
-                todas_as_datas = re.findall(r'\b\d{2}/\d{2}/\d{4}\b', texto_bruto_completo)
-                if len(todas_as_datas) >= 2:
-                    try:
-                        dt1 = datetime.strptime(todas_as_datas[0], "%d/%m/%Y")
-                        dt2 = datetime.strptime(todas_as_datas[1], "%d/%m/%Y")
-                        data_nascimento = min(dt1, dt2)
-                        data_exame = max(dt1, dt2)
-                        calc_idade = data_exame.year - data_nascimento.year - ((data_exame.month, data_exame.day) < (data_nascimento.month, data_nascimento.day))
-                        idade_txt = f"{calc_idade}a"
-                    except:
-                        idade_txt = "Não identificado"
-                else:
-                    idade_txt = "Não identificado"
+                idade_txt = "Não identificado"
 
         # Tenta achar sexo isolado no texto do cabeçalho
         match_sexo_so = re.search(r'Sexo\s*:\s*\b(M|F|Masculino|Feminino)\b', texto_bruto_completo, re.IGNORECASE)
@@ -80,7 +78,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
         medico_solicitante = match_medico.group(1).strip()
         medico_solicitante = re.sub(r'\bCRM.*', '', medico_solicitante, flags=re.IGNORECASE).strip()
             
-    # --- SEGUNDA PASSAGEM: LIMPEZA E AUTOMATIZAÇÃO (CORRIGIDO LINES -> LINHAS) ---
+    # --- SEGUNDA PASSAGEM: LIMPEZA E ANONIMIZAÇÃO ---
     with pdfplumber.open(arquivo_pdf) as pdf:
         for i, pagina in enumerate(pdf.pages):
             texto_pagina = pagina.extract_text()
@@ -92,7 +90,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                 marcos_fim_cabecalho = ["resultados de exames", "www.tecnolab", "senha:", "acesso ao laudo", "coleta:"]
                 termos_bloqueados = ["registro:", "pedido:", "médico:", "convenio:", "idade / sexo", "data cadastro", "cadastro:", "data nascimento:", "ficha:", "data da ficha:"]
                 
-                for linha in linhas: # <--- CORREÇÃO AQUI
+                for linha in linhas:
                     linha_limpa = linha.strip()
                     if not linha_limpa:
                         continue
@@ -108,7 +106,7 @@ def processar_e_anonimizar_pdf(arquivo_pdf):
                         linhas_resultados.append(linha_limpa)
                 
                 if not linhas_resultados:
-                    for linha in linhas: # <--- CORREÇÃO AQUI
+                    for linha in linhas:
                         linha_limpa = linha.strip()
                         if not any(t in linha_limpa.lower() for t in termos_bloqueados):
                             linhas_resultados.append(linha_limpa)
